@@ -22,15 +22,17 @@ fi
 # Create user if not exists
 if ! id "$USERNAME" &>/dev/null; then
   sudo useradd -m -g "$GROUP_NAME" -s /usr/sbin/nologin "$USERNAME"
-  echo "User $USERNAME created."
+  echo "✅ User $USERNAME created."
 else
-  echo "User $USERNAME already exists."
+  echo "ℹ User $USERNAME already exists."
 fi
 
-# Ensure user is in the target group for WordPress write access
+# Add user to WordPress group if needed
 sudo usermod -aG daemon "$USERNAME" || true  # adjust "daemon" if needed
 
+# -------------------------------
 # Create jail structure
+# -------------------------------
 JAIL_DIR="/sftp/$USERNAME"
 DATA_DIR="$JAIL_DIR/data"
 sudo mkdir -p "$DATA_DIR"
@@ -38,8 +40,11 @@ sudo chown root:root "$JAIL_DIR"
 sudo chmod 755 "$JAIL_DIR"
 sudo chown "$USERNAME:$GROUP_NAME" "$DATA_DIR"
 sudo chmod 770 "$DATA_DIR"
+echo "✅ Jail and /data folder ready"
 
-# SSH key setup (outside jail for security)
+# -------------------------------
+# SSH key setup outside jail
+# -------------------------------
 SSH_DIR="/etc/ssh/authorized_keys/$USERNAME"
 sudo mkdir -p "$SSH_DIR"
 sudo chmod 700 "$SSH_DIR"
@@ -50,32 +55,33 @@ if [ ! -f "$KEY_FILE" ]; then
   sudo cp "$KEY_FILE.pub" "$SSH_DIR/authorized_keys"
   sudo chmod 600 "$SSH_DIR/authorized_keys"
   sudo chown root:root "$SSH_DIR/authorized_keys"
-  echo "SSH key generated for $USERNAME."
+  echo "✅ SSH key generated for $USERNAME"
   echo "➡️ Private key saved at: $KEY_FILE"
-  echo "⚠️ Provide this private key to the user for FileZilla login."
+  echo "⚠️ Provide this private key to the user for FileZilla login"
 else
-  echo "SSH key already exists for $USERNAME."
+  echo "ℹ SSH key already exists for $USERNAME"
 fi
 
-# Bind mount target folder inside jail
+# -------------------------------
+# Bind mount target folder
+# -------------------------------
 MOUNT_POINT="$DATA_DIR/$(basename "$TARGET_FOLDER")"
 sudo mkdir -p "$MOUNT_POINT"
 
-# Check if already mounted
 if ! mountpoint -q "$MOUNT_POINT"; then
   sudo mount --bind "$TARGET_FOLDER" "$MOUNT_POINT"
-
-  # Avoid duplicate entries in /etc/fstab
   if ! grep -qs "$MOUNT_POINT" /etc/fstab; then
     echo "$TARGET_FOLDER   $MOUNT_POINT   none   bind   0 0" | sudo tee -a /etc/fstab
   fi
-
-  echo "Mounted $TARGET_FOLDER into $MOUNT_POINT"
+  echo "✅ Mounted $TARGET_FOLDER into $MOUNT_POINT"
 else
-  echo "$MOUNT_POINT already mounted."
+  echo "ℹ $MOUNT_POINT already mounted"
 fi
 
-echo "✅ User $USERNAME ready."
+# -------------------------------
+# Summary
+# -------------------------------
+echo "🎉 User $USERNAME ready for SFTP"
 echo "Jail root: $JAIL_DIR"
 echo "Writable folder: $DATA_DIR"
 
