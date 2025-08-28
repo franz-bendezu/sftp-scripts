@@ -42,7 +42,7 @@ Subsystem sftp internal-sftp
 
 Match Group $GROUP_NAME
     ChrootDirectory /sftp/%u
-    ForceCommand internal-sftp
+    ForceCommand internal-sftp -d /data
     AllowTcpForwarding no
     X11Forwarding no
 EOF
