@@ -1,8 +1,8 @@
 #!/bin/bash
 # create-sftp-user.sh
-# Creates a jailed SFTP-only user, generates SSH key, and mounts target folder.
+# Creates a jailed SFTP-only user, generates SSH key, and mounts target folder safely.
 
-set -e
+set -euo pipefail
 
 GROUP_NAME=$1
 USERNAME=$2
@@ -20,50 +20,62 @@ if ! getent group "$GROUP_NAME" >/dev/null; then
 fi
 
 # Create user if not exists
-if id "$USERNAME" &>/dev/null; then
-  echo "User $USERNAME already exists!"
-else
+if ! id "$USERNAME" &>/dev/null; then
   sudo useradd -m -g "$GROUP_NAME" -s /usr/sbin/nologin "$USERNAME"
   echo "User $USERNAME created."
+else
+  echo "User $USERNAME already exists."
 fi
+
+# Ensure user is in the target group for WordPress write access
+sudo usermod -aG daemon "$USERNAME" || true  # adjust "daemon" if needed
 
 # Create jail structure
 JAIL_DIR="/sftp/$USERNAME"
-sudo mkdir -p "$JAIL_DIR"
+DATA_DIR="$JAIL_DIR/data"
+sudo mkdir -p "$DATA_DIR"
 sudo chown root:root "$JAIL_DIR"
 sudo chmod 755 "$JAIL_DIR"
+sudo chown "$USERNAME:$GROUP_NAME" "$DATA_DIR"
+sudo chmod 770 "$DATA_DIR"
 
-# SSH key setup
-SSH_DIR="$JAIL_DIR/.ssh"
-if [ ! -d "$SSH_DIR" ]; then
-  sudo mkdir -p "$SSH_DIR"
-  sudo chmod 700 "$SSH_DIR"
-  sudo chown $USERNAME:$GROUP_NAME "$SSH_DIR"
-fi
+# SSH key setup (outside jail for security)
+SSH_DIR="/etc/ssh/authorized_keys/$USERNAME"
+sudo mkdir -p "$SSH_DIR"
+sudo chmod 700 "$SSH_DIR"
 
-# Generate SSH key pair for user
 KEY_FILE="$SSH_DIR/${USERNAME}_id_ed25519"
 if [ ! -f "$KEY_FILE" ]; then
-  sudo -u $USERNAME ssh-keygen -t ed25519 -f "$KEY_FILE" -N "" -C "$USERNAME@sftp"
-  cat "$KEY_FILE.pub" | sudo tee "$SSH_DIR/authorized_keys" >/dev/null
+  sudo ssh-keygen -t ed25519 -f "$KEY_FILE" -N "" -C "$USERNAME@sftp"
+  sudo cp "$KEY_FILE.pub" "$SSH_DIR/authorized_keys"
   sudo chmod 600 "$SSH_DIR/authorized_keys"
-  sudo chown $USERNAME:$GROUP_NAME "$SSH_DIR/authorized_keys"
+  sudo chown root:root "$SSH_DIR/authorized_keys"
   echo "SSH key generated for $USERNAME."
-  echo "➡️  Private key saved at: $KEY_FILE"
-  echo "⚠️  Provide this private key to the user for FileZilla login."
+  echo "➡️ Private key saved at: $KEY_FILE"
+  echo "⚠️ Provide this private key to the user for FileZilla login."
 else
   echo "SSH key already exists for $USERNAME."
 fi
 
 # Bind mount target folder inside jail
-MOUNT_POINT="$JAIL_DIR/$(basename $TARGET_FOLDER)"
+MOUNT_POINT="$DATA_DIR/$(basename "$TARGET_FOLDER")"
 sudo mkdir -p "$MOUNT_POINT"
+
+# Check if already mounted
 if ! mountpoint -q "$MOUNT_POINT"; then
   sudo mount --bind "$TARGET_FOLDER" "$MOUNT_POINT"
-  echo "$TARGET_FOLDER   $MOUNT_POINT   none   bind   0 0" | sudo tee -a /etc/fstab
+
+  # Avoid duplicate entries in /etc/fstab
+  if ! grep -qs "$MOUNT_POINT" /etc/fstab; then
+    echo "$TARGET_FOLDER   $MOUNT_POINT   none   bind   0 0" | sudo tee -a /etc/fstab
+  fi
+
   echo "Mounted $TARGET_FOLDER into $MOUNT_POINT"
 else
   echo "$MOUNT_POINT already mounted."
 fi
 
-echo "✅ User $USERNAME ready. Jail: $JAIL_DIR  Target: $TARGET_FOLDER"
+echo "✅ User $USERNAME ready."
+echo "Jail root: $JAIL_DIR"
+echo "Writable folder: $DATA_DIR"
+
